@@ -190,12 +190,7 @@ trigger:
     entity_id: !input temperature_consigne
 
 # ── Conditions globales ───────────────────────────────────────
-condition:
-  - condition: template
-    value_template: >
-      {{ states(temperature_eau_input) not in ['unavailable', 'unknown', 'none'] }}
-    variables:
-      temperature_eau_input: !input temperature_eau
+condition: []
 
 # ── Actions ───────────────────────────────────────────────────
 action:

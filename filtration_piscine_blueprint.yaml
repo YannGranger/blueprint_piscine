@@ -1,0 +1,484 @@
+# ============================================================
+# Blueprint : Filtration Piscine
+# Porté depuis AppDaemon FiltrationPiscine v14/09/2022
+# + Mode Chauffage
+# + Notifications température (horaire) et durée session PAC
+# Compatible Home Assistant 2023.x+
+# ============================================================
+
+blueprint:
+  name: Filtration Piscine
+  description: >
+    Gestion automatique de la filtration piscine.
+
+    **Modes :**
+    - **Été** : filtration calculée (abaque ou T°/2 × coef), répartie autour d'une heure pivot
+    - **Chauffage** : pompe + pompe à chaleur H24 jusqu'à la consigne, puis bascule auto vers Été
+    - **Hiver** : heure fixe + durée fixe
+    - **On** : pompe forcée marche
+    - **Off** : pompe forcée arrêt
+
+    **Électrolyseur** : ON en mode Été/Chauffage si T° eau > 16°C.
+    **Arrêt forcé / délestage** : coupe tout immédiatement.
+
+    **Notifications (notify.Yann) :**
+    - Température eau toutes les heures
+    - Durée de session PAC à chaque arrêt
+  domain: automation
+  author: Port AppDaemon → Blueprint
+  homeassistant:
+    min_version: "2023.4.0"
+
+  input:
+    # ── Capteurs ──────────────────────────────────────────────
+    temperature_eau:
+      name: Capteur température eau
+      description: Température de l'eau (bassin de mesure)
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    # ── Paramètres de pilotage ────────────────────────────────
+    mode_de_fonctionnement:
+      name: Mode de fonctionnement
+      description: "Valeurs attendues dans l'input_select : Ete | Chauffage | Hiver | On | Off"
+      selector:
+        entity:
+          domain: input_select
+
+    mode_calcul:
+      name: Mode de calcul durée filtration
+      description: "On = formule Abaque  |  Off = méthode classique T°/2"
+      selector:
+        entity:
+          domain: input_boolean
+
+    coef:
+      name: Coefficient de filtration (%)
+      description: Pourcentage appliqué à la durée calculée (25–140%)
+      selector:
+        entity:
+          domain: input_number
+
+    # ── Paramètres mode Été ───────────────────────────────────
+    h_pivot:
+      name: Heure pivot (mode Été)
+      description: Centre de la plage de filtration. Écreté entre 11h00 et 14h00.
+      selector:
+        entity:
+          domain: input_datetime
+
+    duree_filtration_ete:
+      name: Durée filtration été (affichage uniquement)
+      description: Input_number mis à jour automatiquement par le blueprint
+      selector:
+        entity:
+          domain: input_number
+
+    # ── Paramètres mode Chauffage ─────────────────────────────
+    temperature_consigne:
+      name: Température de consigne (mode Chauffage)
+      description: >
+        Quand la température eau atteint cette valeur, le mode bascule
+        automatiquement vers Été et la pompe à chaleur s'arrête.
+      selector:
+        entity:
+          domain: input_number
+
+    # ── Paramètres mode Hiver ─────────────────────────────────
+    h_debut_hiver:
+      name: Heure de début filtration (mode Hiver)
+      selector:
+        entity:
+          domain: input_datetime
+
+    duree_hiver:
+      name: Durée filtration hiver (heures)
+      selector:
+        entity:
+          domain: input_number
+
+    # ── Température / mémoire ─────────────────────────────────
+    tempo_eau:
+      name: Temporisation circulation eau (secondes)
+      description: >
+        Délai après démarrage pompe avant de prendre en compte la mesure
+        (laisser le temps à l'eau de circuler jusqu'au capteur)
+      selector:
+        entity:
+          domain: input_number
+
+    mem_temp:
+      name: Mémoire température eau
+      description: Stocke la dernière température valide mesurée pompe en marche
+      selector:
+        entity:
+          domain: input_number
+
+    # ── Arrêt forcé ───────────────────────────────────────────
+    arret_force:
+      name: Arrêt forcé / Délestage
+      description: Si On → coupe immédiatement pompe, pompe à chaleur et électrolyseur
+      selector:
+        entity:
+          domain: input_boolean
+
+    # ── Actionneurs ───────────────────────────────────────────
+    cde_pompe:
+      name: Switch pompe de filtration
+      selector:
+        entity:
+          domain: switch
+
+    cde_electrolyseur:
+      name: Switch électrolyseur
+      selector:
+        entity:
+          domain: switch
+
+    cde_pompe_chaleur:
+      name: Switch pompe à chaleur
+      selector:
+        entity:
+          domain: switch
+
+    # ── Affichage ─────────────────────────────────────────────
+    periode_filtration:
+      name: Texte période de filtration
+      description: Input_text mis à jour pour afficher la plage horaire calculée
+      selector:
+        entity:
+          domain: input_text
+
+    # ── Notifications ─────────────────────────────────────────
+    service_notification:
+      name: Service de notification
+      description: "Ex : notify.Yann — doit exister dans votre HA"
+      default: notify.notify
+      selector:
+        text:
+
+# ── Comportement de l'automation ──────────────────────────────
+mode: queued
+max: 2
+max_exceeded: silent
+
+# ── Déclencheurs ──────────────────────────────────────────────
+trigger:
+  # Cycle principal toutes les 5 minutes
+  - id: cycle_5min
+    platform: time_pattern
+    minutes: "/5"
+
+  # Notification température toutes les heures (minute 0)
+  - id: notif_temp_horaire
+    platform: time_pattern
+    hours: "/1"
+    minutes: "0"
+
+  # Arrêt de la pompe à chaleur → notification durée session
+  - id: pac_arret
+    platform: state
+    entity_id: !input cde_pompe_chaleur
+    from: "on"
+    to: "off"
+
+  # Déclencheurs sur changements de paramètres
+  - platform: state
+    entity_id: !input temperature_eau
+  - platform: state
+    entity_id: !input mode_de_fonctionnement
+  - platform: state
+    entity_id: !input coef
+  - platform: state
+    entity_id: !input h_pivot
+  - platform: state
+    entity_id: !input mode_calcul
+  - platform: state
+    entity_id: !input arret_force
+  - platform: state
+    entity_id: !input temperature_consigne
+
+# ── Conditions globales ───────────────────────────────────────
+condition:
+  - condition: template
+    value_template: >
+      {{ states(temperature_eau_input) not in ['unavailable', 'unknown', 'none'] }}
+    variables:
+      temperature_eau_input: !input temperature_eau
+
+# ── Actions ───────────────────────────────────────────────────
+action:
+  # ── Étape 1 : Calcul de toutes les variables ──────────────
+  - variables:
+      _temp_eau:             !input temperature_eau
+      _mode:                 !input mode_de_fonctionnement
+      _h_pivot:              !input h_pivot
+      _h_debut_hiver:        !input h_debut_hiver
+      _duree_hiver:          !input duree_hiver
+      _coef:                 !input coef
+      _mode_calcul:          !input mode_calcul
+      _tempo_eau:            !input tempo_eau
+      _mem_temp:             !input mem_temp
+      _arret_force:          !input arret_force
+      _cde_pompe:            !input cde_pompe
+      _cde_electrolyseur:    !input cde_electrolyseur
+      _cde_pompe_chaleur:    !input cde_pompe_chaleur
+      _temperature_consigne: !input temperature_consigne
+      _notif:                !input service_notification
+
+      # ── Valeurs de base ────────────────────────────────────
+      mode:     "{{ states(_mode) }}"
+      arret:    "{{ is_state(_arret_force, 'on') }}"
+      coef_val: "{{ states(_coef) | float(100) / 100 }}"
+      consigne: "{{ states(_temperature_consigne) | float(28) }}"
+
+      # ── Température effective ──────────────────────────────
+      pompe_on_since_s: >
+        {% if is_state(_cde_pompe, 'on') %}
+          {{ (now() - states[_cde_pompe].last_changed).total_seconds() | float(0) }}
+        {% else %}
+          0
+        {% endif %}
+      tempo_s:     "{{ states(_tempo_eau) | float(0) }}"
+      temp_mesure: "{{ states(_temp_eau) | float(20) }}"
+      temp_mem:    "{{ states(_mem_temp) | float(20) }}"
+      temperature_eau: >
+        {% if is_state(_cde_pompe, 'on') and pompe_on_since_s >= tempo_s %}
+          {{ temp_mesure }}
+        {% else %}
+          {{ temp_mem }}
+        {% endif %}
+
+      # ── Consigne atteinte ? ────────────────────────────────
+      consigne_atteinte: "{{ temperature_eau | float(0) >= consigne }}"
+
+      # ── Calcul durée filtration ────────────────────────────
+      temp_min: "{{ [temperature_eau | float(20), 10.0] | max }}"
+      duree_abaque_h: >
+        {{ (0.00335 * temp_min**3
+            - 0.14953 * temp_min**2
+            + 2.43489 * temp_min
+            - 10.72859) | round(3) }}
+      duree_classique_h: "{{ (temp_min / 2) | round(3) }}"
+      duree_ete_h: >
+        {% if is_state(_mode_calcul, 'on') %}
+          {{ (duree_abaque_h * coef_val) | round(2) }}
+        {% else %}
+          {{ (duree_classique_h * coef_val) | round(2) }}
+        {% endif %}
+
+      # ── Plage horaire mode Été ─────────────────────────────
+      pivot_s: >
+        {{ (state_attr(_h_pivot, 'hour') | int(13)) * 3600
+           + (state_attr(_h_pivot, 'minute') | int(0)) * 60 }}
+      pivot_s_clamp: "{{ [[pivot_s, 39600] | max, 50400] | min }}"
+      demi_duree_s: "{{ (duree_ete_h / 2 * 3600) | int }}"
+      debut_ete_s:  "{{ [pivot_s_clamp - demi_duree_s, 0]     | max }}"
+      fin_ete_s:    "{{ [pivot_s_clamp + demi_duree_s, 86399] | min }}"
+
+      # ── Plage horaire mode Hiver ───────────────────────────
+      debut_hiver_s: >
+        {{ (state_attr(_h_debut_hiver, 'hour') | int(8)) * 3600
+           + (state_attr(_h_debut_hiver, 'minute') | int(0)) * 60 }}
+      fin_hiver_s: >
+        {{ debut_hiver_s + (states(_duree_hiver) | float(2) * 3600) | int }}
+
+      # ── Heure actuelle en secondes ─────────────────────────
+      now_s: "{{ now().hour * 3600 + now().minute * 60 + now().second }}"
+
+      # ── Décision pompe filtration ──────────────────────────
+      ma_ppe: >
+        {% if mode == 'Ete' %}
+          {{ now_s >= debut_ete_s and now_s <= fin_ete_s }}
+        {% elif mode == 'Chauffage' %}
+          true
+        {% elif mode == 'Hiver' %}
+          {{ now_s >= debut_hiver_s and now_s <= fin_hiver_s }}
+        {% elif mode == 'On' %}
+          true
+        {% else %}
+          false
+        {% endif %}
+
+      # ── Décision pompe à chaleur ───────────────────────────
+      ma_pac: "{{ mode == 'Chauffage' and not consigne_atteinte }}"
+
+      # ── Texte d'affichage ──────────────────────────────────
+      txt_periode: >
+        {% if arret %}
+          At delestage
+        {% elif mode == 'Ete' %}
+          {% set h_d = debut_ete_s    // 3600 %}
+          {% set m_d = (debut_ete_s   % 3600) // 60 %}
+          {% set h_p = pivot_s_clamp  // 3600 %}
+          {% set m_p = (pivot_s_clamp % 3600) // 60 %}
+          {% set h_f = fin_ete_s      // 3600 %}
+          {% set m_f = (fin_ete_s     % 3600) // 60 %}
+          {{ "%02d:%02d/%02d:%02d/%02d:%02d" | format(h_d, m_d, h_p, m_p, h_f, m_f) }}
+        {% elif mode == 'Chauffage' %}
+          Chauffage / consigne {{ consigne | round(1) }}°C
+        {% elif mode == 'Hiver' %}
+          {% set h_d = debut_hiver_s // 3600 %}
+          {% set m_d = (debut_hiver_s % 3600) // 60 %}
+          {% set h_f = fin_hiver_s   // 3600 %}
+          {% set m_f = (fin_hiver_s  % 3600) // 60 %}
+          {{ "%02d:%02d/%02d:%02d" | format(h_d, m_d, h_f, m_f) }}
+        {% elif mode == 'Off' %}
+          At manuel
+        {% elif mode == 'On' %}
+          Ma manuel
+        {% else %}
+          Mode inconnu
+        {% endif %}
+
+  # ═══════════════════════════════════════════════════════════
+  # NOTIFICATIONS
+  # ═══════════════════════════════════════════════════════════
+
+  # ── Notification : Température eau (toutes les heures) ────
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'notif_temp_horaire' }}"
+    then:
+      - service: "{{ _notif }}"
+        data:
+          title: "🏊 Piscine — Température eau"
+          message: >
+            🌡️ Eau : {{ temperature_eau | round(1) }}°C
+            🌬️ Mode : {{ mode }}
+            ⏱️ Filtration : {{ duree_ete_h | round(1) }}h calculées
+            💧 Pompe : {{ 'En marche' if is_state(_cde_pompe, 'on') else 'Arrêtée' }}
+            {% if mode == 'Chauffage' %}🎯 Consigne : {{ consigne | round(1) }}°C{% endif %}
+
+  # ── Notification : Arrêt PAC → durée de session ───────────
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'pac_arret' }}"
+    then:
+      - variables:
+          pac_duree_s: >
+            {{ (now() - trigger.from_state.last_changed).total_seconds() | int }}
+          pac_duree_h: "{{ pac_duree_s // 3600 }}"
+          pac_duree_m: "{{ (pac_duree_s % 3600) // 60 }}"
+      - service: "{{ _notif }}"
+        data:
+          title: "🌡️ Piscine — Pompe à chaleur arrêtée"
+          message: >
+            ⏱️ Durée session : {{ pac_duree_h }}h{{ '%02d' | format(pac_duree_m) }}
+            🌡️ Température eau : {{ temperature_eau | round(1) }}°C
+            🎯 Consigne : {{ consigne | round(1) }}°C
+
+  # ═══════════════════════════════════════════════════════════
+  # LOGIQUE DE PILOTAGE
+  # ═══════════════════════════════════════════════════════════
+
+  # ── Basculer vers Été si consigne atteinte en Chauffage ───
+  - if:
+      - condition: template
+        value_template: "{{ mode == 'Chauffage' and consigne_atteinte }}"
+    then:
+      - service: input_select.select_option
+        target:
+          entity_id: !input mode_de_fonctionnement
+        data:
+          option: "Ete"
+      - service: switch.turn_off
+        target:
+          entity_id: !input cde_pompe_chaleur
+      - stop: "Consigne atteinte — basculement vers mode Été"
+
+  # ── Mémoriser la température (si pompe stabilisée) ────────
+  - if:
+      - condition: template
+        value_template: >
+          {{ is_state(_cde_pompe, 'on') and pompe_on_since_s >= tempo_s }}
+    then:
+      - service: input_number.set_value
+        target:
+          entity_id: !input mem_temp
+        data:
+          value: "{{ temp_mesure }}"
+
+  # ── Mettre à jour durée filtration (Été et Chauffage) ─────
+  - if:
+      - condition: template
+        value_template: "{{ mode in ['Ete', 'Chauffage'] }}"
+    then:
+      - service: input_number.set_value
+        target:
+          entity_id: !input duree_filtration_ete
+        data:
+          value: "{{ duree_ete_h }}"
+
+  # ── Mettre à jour l'affichage plage horaire ───────────────
+  - service: input_text.set_value
+    target:
+      entity_id: !input periode_filtration
+    data:
+      value: "{{ txt_periode }}"
+
+  # ── Commandes pompe, PAC, électrolyseur ───────────────────
+  - if:
+      - condition: template
+        value_template: "{{ arret }}"
+    then:
+      # ── Arrêt forcé / délestage ───────────────────────────
+      - service: switch.turn_off
+        target:
+          entity_id: !input cde_electrolyseur
+      - delay: "00:00:01"
+      - service: switch.turn_off
+        target:
+          entity_id: !input cde_pompe_chaleur
+      - delay: "00:00:01"
+      - service: switch.turn_off
+        target:
+          entity_id: !input cde_pompe
+    else:
+      - if:
+          - condition: template
+            value_template: "{{ ma_ppe }}"
+        then:
+          # ── Dans la plage → Marche ────────────────────────
+          - service: switch.turn_on
+            target:
+              entity_id: !input cde_pompe
+          - if:
+              - condition: template
+                value_template: "{{ ma_pac }}"
+            then:
+              - service: switch.turn_on
+                target:
+                  entity_id: !input cde_pompe_chaleur
+            else:
+              - service: switch.turn_off
+                target:
+                  entity_id: !input cde_pompe_chaleur
+          - if:
+              - condition: template
+                value_template: >
+                  {{ mode != 'Hiver' and temperature_eau | float(0) > 16 }}
+            then:
+              - delay: "00:00:01"
+              - service: switch.turn_on
+                target:
+                  entity_id: !input cde_electrolyseur
+            else:
+              - service: switch.turn_off
+                target:
+                  entity_id: !input cde_electrolyseur
+        else:
+          # ── Hors plage → Arrêt tout ───────────────────────
+          - service: switch.turn_off
+            target:
+              entity_id: !input cde_electrolyseur
+          - delay: "00:00:01"
+          - service: switch.turn_off
+            target:
+              entity_id: !input cde_pompe_chaleur
+          - delay: "00:00:01"
+          - service: switch.turn_off
+            target:
+              entity_id: !input cde_pompe

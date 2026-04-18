@@ -19,7 +19,6 @@ blueprint:
     - **Off** : pompe forcée arrêt
 
     **Électrolyseur** : ON en mode Été/Chauffage si T° eau > 16°C.
-    **Arrêt forcé / délestage** : coupe tout immédiatement.
 
     **Notifications (notify.Yann) :**
     - Température eau toutes les heures
@@ -116,14 +115,6 @@ blueprint:
         entity:
           domain: input_number
 
-    # ── Arrêt forcé ───────────────────────────────────────────
-    arret_force:
-      name: Arrêt forcé / Délestage
-      description: Si On → coupe immédiatement pompe, pompe à chaleur et électrolyseur
-      selector:
-        entity:
-          domain: input_boolean
-
     # ── Actionneurs ───────────────────────────────────────────
     cde_pompe:
       name: Switch pompe de filtration
@@ -196,8 +187,6 @@ trigger:
   - platform: state
     entity_id: !input mode_calcul
   - platform: state
-    entity_id: !input arret_force
-  - platform: state
     entity_id: !input temperature_consigne
 
 # ── Conditions globales ───────────────────────────────────────
@@ -221,7 +210,6 @@ action:
       _mode_calcul:          !input mode_calcul
       _tempo_eau:            !input tempo_eau
       _mem_temp:             !input mem_temp
-      _arret_force:          !input arret_force
       _cde_pompe:            !input cde_pompe
       _cde_electrolyseur:    !input cde_electrolyseur
       _cde_pompe_chaleur:    !input cde_pompe_chaleur
@@ -230,7 +218,6 @@ action:
 
       # ── Valeurs de base ────────────────────────────────────
       mode:     "{{ states(_mode) }}"
-      arret:    "{{ is_state(_arret_force, 'on') }}"
       coef_val: "{{ states(_coef) | float(100) / 100 }}"
       consigne: "{{ states(_temperature_consigne) | float(28) }}"
 
@@ -307,9 +294,7 @@ action:
 
       # ── Texte d'affichage ──────────────────────────────────
       txt_periode: >
-        {% if arret %}
-          At delestage
-        {% elif mode == 'Ete' %}
+        {% if mode == 'Ete' %}
           {% set h_d = debut_ete_s    // 3600 %}
           {% set m_d = (debut_ete_s   % 3600) // 60 %}
           {% set h_p = pivot_s_clamp  // 3600 %}
@@ -422,9 +407,38 @@ action:
   # ── Commandes pompe, PAC, électrolyseur ───────────────────
   - if:
       - condition: template
-        value_template: "{{ arret }}"
+        value_template: "{{ ma_ppe }}"
     then:
-      # ── Arrêt forcé / délestage ───────────────────────────
+      # ── Dans la plage → Marche ──────────────────────────
+      - service: switch.turn_on
+        target:
+          entity_id: !input cde_pompe
+      - if:
+          - condition: template
+            value_template: "{{ ma_pac }}"
+        then:
+          - service: switch.turn_on
+            target:
+              entity_id: !input cde_pompe_chaleur
+        else:
+          - service: switch.turn_off
+            target:
+              entity_id: !input cde_pompe_chaleur
+      - if:
+          - condition: template
+            value_template: >
+              {{ mode != 'Hiver' and temperature_eau | float(0) > 16 }}
+        then:
+          - delay: "00:00:01"
+          - service: switch.turn_on
+            target:
+              entity_id: !input cde_electrolyseur
+        else:
+          - service: switch.turn_off
+            target:
+              entity_id: !input cde_electrolyseur
+    else:
+      # ── Hors plage → Arrêt tout ─────────────────────────
       - service: switch.turn_off
         target:
           entity_id: !input cde_electrolyseur
@@ -436,49 +450,3 @@ action:
       - service: switch.turn_off
         target:
           entity_id: !input cde_pompe
-    else:
-      - if:
-          - condition: template
-            value_template: "{{ ma_ppe }}"
-        then:
-          # ── Dans la plage → Marche ────────────────────────
-          - service: switch.turn_on
-            target:
-              entity_id: !input cde_pompe
-          - if:
-              - condition: template
-                value_template: "{{ ma_pac }}"
-            then:
-              - service: switch.turn_on
-                target:
-                  entity_id: !input cde_pompe_chaleur
-            else:
-              - service: switch.turn_off
-                target:
-                  entity_id: !input cde_pompe_chaleur
-          - if:
-              - condition: template
-                value_template: >
-                  {{ mode != 'Hiver' and temperature_eau | float(0) > 16 }}
-            then:
-              - delay: "00:00:01"
-              - service: switch.turn_on
-                target:
-                  entity_id: !input cde_electrolyseur
-            else:
-              - service: switch.turn_off
-                target:
-                  entity_id: !input cde_electrolyseur
-        else:
-          # ── Hors plage → Arrêt tout ───────────────────────
-          - service: switch.turn_off
-            target:
-              entity_id: !input cde_electrolyseur
-          - delay: "00:00:01"
-          - service: switch.turn_off
-            target:
-              entity_id: !input cde_pompe_chaleur
-          - delay: "00:00:01"
-          - service: switch.turn_off
-            target:
-              entity_id: !input cde_pompe

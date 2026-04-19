@@ -12,7 +12,7 @@ blueprint:
     Gestion automatique de la filtration piscine.
 
     **Modes :**
-    - **Été** : filtration calculée (abaque ou T°/2 × coef), répartie autour d'une heure pivot
+    - **Été** : filtration calculée (abaque ou T°/2 × coef), répartie en 1, 2 ou 3 sessions à des heures configurables
     - **Chauffage** : pompe + pompe à chaleur H24 jusqu'à la consigne, puis bascule auto vers Été
     - **Hiver** : heure fixe + durée fixe
     - **On** : pompe forcée marche
@@ -63,9 +63,38 @@ blueprint:
           domain: input_number
 
     # ── Paramètres mode Été ───────────────────────────────────
-    h_pivot:
-      name: Heure pivot (mode Été)
-      description: Centre de la plage de filtration. Écreté entre 11h00 et 14h00.
+    nb_sessions_ete:
+      name: Nombre de sessions par jour (mode Été)
+      description: La durée de filtration calculée est répartie équitablement entre les sessions.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 3
+          step: 1
+          mode: box
+
+    h_session_1:
+      name: Heure de début — session 1 (mode Été)
+      description: >
+        La session 1 démarre à cette heure et dure duree_totale / nb_sessions.
+        Remplace l'ancienne heure pivot.
+      selector:
+        entity:
+          domain: input_datetime
+
+    h_session_2:
+      name: Heure de début — session 2 (mode Été)
+      description: Ignorée si nb_sessions = 1. Laisser vide si inutilisée.
+      default: ""
+      selector:
+        entity:
+          domain: input_datetime
+
+    h_session_3:
+      name: Heure de début — session 3 (mode Été)
+      description: Ignorée si nb_sessions ≤ 2. Laisser vide si inutilisée.
+      default: ""
       selector:
         entity:
           domain: input_datetime
@@ -221,7 +250,7 @@ trigger:
   - platform: state
     entity_id: !input coef
   - platform: state
-    entity_id: !input h_pivot
+    entity_id: !input h_session_1
   - platform: state
     entity_id: !input mode_calcul
   - platform: state
@@ -236,7 +265,10 @@ action:
   - variables:
       _temp_eau:             !input temperature_eau
       _mode:                 !input mode_de_fonctionnement
-      _h_pivot:              !input h_pivot
+      _nb_sessions_ete:      !input nb_sessions_ete
+      _h_session_1:          !input h_session_1
+      _h_session_2:          !input h_session_2
+      _h_session_3:          !input h_session_3
       _h_debut_hiver:        !input h_debut_hiver
       _duree_hiver:          !input duree_hiver
       _coef:                 !input coef
@@ -293,14 +325,32 @@ action:
           {{ (duree_classique_h * coef_val) | round(2) }}
         {% endif %}
 
-      # ── Plage horaire mode Été ─────────────────────────────
-      pivot_s: >
-        {{ (state_attr(_h_pivot, 'hour') | int(13)) * 3600
-           + (state_attr(_h_pivot, 'minute') | int(0)) * 60 }}
-      pivot_s_clamp: "{{ [[pivot_s, 39600] | max, 50400] | min }}"
-      demi_duree_s: "{{ (duree_ete_h / 2 * 3600) | int }}"
-      debut_ete_s:  "{{ [pivot_s_clamp - demi_duree_s, 0]     | max }}"
-      fin_ete_s:    "{{ [pivot_s_clamp + demi_duree_s, 86399] | min }}"
+      # ── Sessions mode Été ─────────────────────────────────
+      nb_sessions: "{{ _nb_sessions_ete | int(1) }}"
+      session_duree_s: "{{ (duree_ete_h * 3600 / [nb_sessions, 1] | max) | int }}"
+      debut_s1: >
+        {{ (state_attr(_h_session_1, 'hour') | int(13)) * 3600
+           + (state_attr(_h_session_1, 'minute') | int(0)) * 60 }}
+      debut_s2: >
+        {% if _h_session_2 %}
+          {{ (state_attr(_h_session_2, 'hour') | int(0)) * 3600
+             + (state_attr(_h_session_2, 'minute') | int(0)) * 60 }}
+        {% else %}
+          0
+        {% endif %}
+      debut_s3: >
+        {% if _h_session_3 %}
+          {{ (state_attr(_h_session_3, 'hour') | int(0)) * 3600
+             + (state_attr(_h_session_3, 'minute') | int(0)) * 60 }}
+        {% else %}
+          0
+        {% endif %}
+      in_session_ete: >
+        {{ (now_s >= debut_s1 and now_s < debut_s1 + session_duree_s)
+           or (nb_sessions >= 2 and _h_session_2 and
+               now_s >= debut_s2 and now_s < debut_s2 + session_duree_s)
+           or (nb_sessions >= 3 and _h_session_3 and
+               now_s >= debut_s3 and now_s < debut_s3 + session_duree_s) }}
 
       # ── Plage horaire mode Hiver ───────────────────────────
       debut_hiver_s: >
@@ -315,7 +365,7 @@ action:
       # ── Décision pompe filtration ──────────────────────────
       ma_ppe: >
         {% if mode == 'Ete' %}
-          {{ now_s >= debut_ete_s and now_s <= fin_ete_s }}
+          {{ in_session_ete }}
         {% elif mode == 'Chauffage' %}
           true
         {% elif mode == 'Hiver' %}
@@ -332,13 +382,23 @@ action:
       # ── Texte d'affichage ──────────────────────────────────
       txt_periode: >
         {% if mode == 'Ete' %}
-          {% set h_d = debut_ete_s    // 3600 %}
-          {% set m_d = (debut_ete_s   % 3600) // 60 %}
-          {% set h_p = pivot_s_clamp  // 3600 %}
-          {% set m_p = (pivot_s_clamp % 3600) // 60 %}
-          {% set h_f = fin_ete_s      // 3600 %}
-          {% set m_f = (fin_ete_s     % 3600) // 60 %}
-          {{ "%02d:%02d/%02d:%02d/%02d:%02d" | format(h_d, m_d, h_p, m_p, h_f, m_f) }}
+          {% set s1e = debut_s1 + session_duree_s %}
+          {% set txt = "%02d:%02d→%02d:%02d" | format(
+               debut_s1 // 3600, (debut_s1 % 3600) // 60,
+               s1e // 3600,      (s1e % 3600) // 60) %}
+          {% if nb_sessions >= 2 and _h_session_2 %}
+            {% set s2e = debut_s2 + session_duree_s %}
+            {% set txt = txt ~ " / " ~ ("%02d:%02d→%02d:%02d" | format(
+                 debut_s2 // 3600, (debut_s2 % 3600) // 60,
+                 s2e // 3600,      (s2e % 3600) // 60)) %}
+          {% endif %}
+          {% if nb_sessions >= 3 and _h_session_3 %}
+            {% set s3e = debut_s3 + session_duree_s %}
+            {% set txt = txt ~ " / " ~ ("%02d:%02d→%02d:%02d" | format(
+                 debut_s3 // 3600, (debut_s3 % 3600) // 60,
+                 s3e // 3600,      (s3e % 3600) // 60)) %}
+          {% endif %}
+          {{ txt }}
         {% elif mode == 'Chauffage' %}
           Chauffage / consigne {{ consigne | round(1) }}°C
         {% elif mode == 'Hiver' %}
@@ -496,7 +556,8 @@ action:
               {{ temperature_eau | float(0) > 16
                  and (
                    mode == 'On'
-                   or (mode in ['Ete', 'Chauffage'] and now_s >= pivot_s_clamp and now_s <= fin_ete_s)
+                   or (mode == 'Ete' and in_session_ete)
+                   or (mode == 'Chauffage' and now_s >= debut_s1 and now_s < debut_s1 + session_duree_s)
                  ) }}
         then:
           - service: switch.turn_on

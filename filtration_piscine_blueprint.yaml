@@ -20,8 +20,10 @@ blueprint:
 
     **Électrolyseur** : ON en mode Été/Chauffage si T° eau > 16°C.
 
-    **Notifications (notify.Yann) :**
-    - Température eau toutes les heures
+    **Notifications :**
+    - Notification quotidienne à l'heure configurée (activable/désactivable)
+    - Notification horaire en mode Chauffage (température + progression)
+    - Notification quand la consigne de température est atteinte
     - Durée de session PAC à chaque arrêt
   domain: automation
   author: Port AppDaemon → Blueprint
@@ -150,6 +152,24 @@ blueprint:
       selector:
         text:
 
+    activer_notifications:
+      name: Activer les notifications
+      description: >
+        input_boolean — active (on) ou désactive (off) toutes les notifications.
+        Créer un input_boolean dans HA et le sélectionner ici.
+      selector:
+        entity:
+          domain: input_boolean
+
+    heure_notification_quotidienne:
+      name: Heure de la notification quotidienne
+      description: >
+        input_datetime — heure d'envoi du résumé journalier (ex : 08:00).
+        Créer un input_datetime (heure uniquement) dans HA et le sélectionner ici.
+      selector:
+        entity:
+          domain: input_datetime
+
 # ── Comportement de l'automation ──────────────────────────────
 mode: queued
 max: 2
@@ -162,8 +182,13 @@ trigger:
     platform: time_pattern
     minutes: "/5"
 
-  # Notification température toutes les heures (minute 0)
-  - id: notif_temp_horaire
+  # Notification quotidienne à l'heure configurée
+  - id: notif_quotidienne
+    platform: time
+    at: !input heure_notification_quotidienne
+
+  # Notification horaire en mode Chauffage (toutes les heures, minute 0)
+  - id: notif_chauffage_horaire
     platform: time_pattern
     hours: "/1"
     minutes: "0"
@@ -210,11 +235,13 @@ action:
       _cde_pompe_chaleur:    !input cde_pompe_chaleur
       _temperature_consigne: !input temperature_consigne
       _notif:                !input service_notification
+      _activer_notif:        !input activer_notifications
 
       # ── Valeurs de base ────────────────────────────────────
       mode:     "{{ states(_mode) }}"
       coef_val: "{{ states(_coef) | float(100) / 100 }}"
       consigne: "{{ states(_temperature_consigne) | float(28) }}"
+      notif_active: "{{ is_state(_activer_notif, 'on') }}"
 
       # ── Température effective ──────────────────────────────
       pompe_on_since_s: >
@@ -317,14 +344,14 @@ action:
   # NOTIFICATIONS
   # ═══════════════════════════════════════════════════════════
 
-  # ── Notification : Température eau (toutes les heures) ────
+  # ── Notification quotidienne (à l'heure configurée) ─────────
   - if:
       - condition: template
-        value_template: "{{ trigger.id == 'notif_temp_horaire' }}"
+        value_template: "{{ trigger.id == 'notif_quotidienne' and notif_active }}"
     then:
       - service: "{{ _notif }}"
         data:
-          title: "🏊 Piscine — Température eau"
+          title: "🏊 Piscine — Résumé quotidien"
           message: >
             🌡️ Eau : {{ temperature_eau | round(1) }}°C
             🌬️ Mode : {{ mode }}
@@ -332,10 +359,28 @@ action:
             💧 Pompe : {{ 'En marche' if is_state(_cde_pompe, 'on') else 'Arrêtée' }}
             {% if mode == 'Chauffage' %}🎯 Consigne : {{ consigne | round(1) }}°C{% endif %}
 
-  # ── Notification : Arrêt PAC → durée de session ───────────
+  # ── Notification horaire mode Chauffage ──────────────────────
   - if:
       - condition: template
-        value_template: "{{ trigger.id == 'pac_arret' }}"
+        value_template: >
+          {{ trigger.id == 'notif_chauffage_horaire'
+             and mode == 'Chauffage'
+             and notif_active }}
+    then:
+      - service: "{{ _notif }}"
+        data:
+          title: "🔥 Piscine — Mode Chauffage actif"
+          message: >
+            🌡️ Eau : {{ temperature_eau | round(1) }}°C
+            🎯 Consigne : {{ consigne | round(1) }}°C
+            📊 Progression : {{ [[((temperature_eau | float(0)) / consigne * 100) | round(0), 0] | max, 100] | min }}%
+            🔥 PAC : {{ 'En marche' if is_state(_cde_pompe_chaleur, 'on') else 'Arrêtée' }}
+            💧 Pompe : {{ 'En marche' if is_state(_cde_pompe, 'on') else 'Arrêtée' }}
+
+  # ── Notification : Arrêt PAC → durée de session ──────────────
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'pac_arret' and notif_active }}"
     then:
       - variables:
           pac_duree_s: >
@@ -359,6 +404,17 @@ action:
       - condition: template
         value_template: "{{ mode == 'Chauffage' and consigne_atteinte }}"
     then:
+      - if:
+          - condition: template
+            value_template: "{{ notif_active }}"
+        then:
+          - service: "{{ _notif }}"
+            data:
+              title: "✅ Piscine — Consigne atteinte !"
+              message: >
+                🌡️ Température eau : {{ temperature_eau | round(1) }}°C
+                🎯 Consigne : {{ consigne | round(1) }}°C atteinte
+                🌬️ Passage automatique en mode Été — PAC arrêtée
       - service: input_select.select_option
         target:
           entity_id: !input mode_de_fonctionnement

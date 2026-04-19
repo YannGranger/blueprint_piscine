@@ -265,7 +265,7 @@ action:
           0
         {% endif %}
       tempo_s:      "{{ states(_tempo_eau) | float(0) }}"
-      tempo_arret:  "{{ states(_tempo_arret) | int(1) }}"
+      tempo_arret:  "{{ _tempo_arret | int(1) }}"
       temp_mesure: "{{ states(_temp_eau) | float(20) }}"
       temp_mem:    "{{ states(_mem_temp) | float(20) }}"
       temperature_eau: >

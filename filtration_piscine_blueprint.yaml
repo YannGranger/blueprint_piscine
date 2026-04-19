@@ -481,7 +481,7 @@ action:
               {{ temperature_eau | float(0) > 16
                  and (
                    mode == 'On'
-                   or (mode in ['Ete', 'Chauffage'] and now_s >= debut_ete_s and now_s <= fin_ete_s)
+                   or (mode in ['Ete', 'Chauffage'] and now_s >= pivot_s_clamp and now_s <= fin_ete_s)
                  ) }}
         then:
           - delay: "00:00:01"

@@ -478,7 +478,9 @@ action:
       - if:
           - condition: template
             value_template: >
-              {{ mode != 'Hiver' and temperature_eau | float(0) > 16 }}
+              {{ mode != 'Hiver'
+                 and temperature_eau | float(0) > 16
+                 and (mode != 'Chauffage' or (now_s >= debut_ete_s and now_s <= fin_ete_s)) }}
         then:
           - delay: "00:00:01"
           - service: switch.turn_on

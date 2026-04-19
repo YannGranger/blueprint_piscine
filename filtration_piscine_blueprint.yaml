@@ -66,13 +66,9 @@ blueprint:
     nb_sessions_ete:
       name: Nombre de sessions par jour (mode Été)
       description: La durée de filtration calculée est répartie équitablement entre les sessions.
-      default: 1
       selector:
-        number:
-          min: 1
-          max: 3
-          step: 1
-          mode: box
+        entity:
+          domain: input_number
 
     h_session_1:
       name: Heure de début — session 1 (mode Été)
@@ -144,13 +140,9 @@ blueprint:
       description: >
         La pompe continue de tourner ce nombre de secondes après l'arrêt de la
         PAC et de l'électrolyseur (modes Été et Chauffage uniquement)
-      default: 1
       selector:
-        number:
-          min: 0
-          max: 300
-          unit_of_measurement: s
-          mode: box
+        entity:
+          domain: input_number
 
     mem_temp:
       name: Mémoire température eau
@@ -255,6 +247,10 @@ trigger:
     entity_id: !input mode_calcul
   - platform: state
     entity_id: !input temperature_consigne
+  - platform: state
+    entity_id: !input nb_sessions_ete
+  - platform: state
+    entity_id: !input tempo_arret
 
 # ── Conditions globales ───────────────────────────────────────
 condition: []
@@ -297,7 +293,7 @@ action:
           0
         {% endif %}
       tempo_s:      "{{ states(_tempo_eau) | float(0) }}"
-      tempo_arret:  "{{ _tempo_arret | int(1) }}"
+      tempo_arret:  "{{ states(_tempo_arret) | int(1) }}"
       temp_mesure: "{{ states(_temp_eau) | float(20) }}"
       temp_mem:    "{{ states(_mem_temp) | float(20) }}"
       temperature_eau: >
@@ -326,7 +322,7 @@ action:
         {% endif %}
 
       # ── Sessions mode Été ─────────────────────────────────
-      nb_sessions: "{{ _nb_sessions_ete | int(1) }}"
+      nb_sessions: "{{ states(_nb_sessions_ete) | int(1) }}"
       session_duree_s: "{{ (duree_ete_h * 3600 / [nb_sessions, 1] | max) | int }}"
       debut_s1: >
         {{ (state_attr(_h_session_1, 'hour') | int(13)) * 3600

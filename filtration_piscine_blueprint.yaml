@@ -110,6 +110,19 @@ blueprint:
         entity:
           domain: input_number
 
+    tempo_arret:
+      name: Délai arrêt PAC/électrolyseur → pompe (s)
+      description: >
+        La pompe continue de tourner ce nombre de secondes après l'arrêt de la
+        PAC et de l'électrolyseur (modes Été et Chauffage uniquement)
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 300
+          unit_of_measurement: s
+          mode: box
+
     mem_temp:
       name: Mémoire température eau
       description: Stocke la dernière température valide mesurée pompe en marche
@@ -229,6 +242,7 @@ action:
       _coef:                 !input coef
       _mode_calcul:          !input mode_calcul
       _tempo_eau:            !input tempo_eau
+      _tempo_arret:          !input tempo_arret
       _mem_temp:             !input mem_temp
       _cde_pompe:            !input cde_pompe
       _cde_electrolyseur:    !input cde_electrolyseur
@@ -250,7 +264,8 @@ action:
         {% else %}
           0
         {% endif %}
-      tempo_s:     "{{ states(_tempo_eau) | float(0) }}"
+      tempo_s:      "{{ states(_tempo_eau) | float(0) }}"
+      tempo_arret:  "{{ states(_tempo_arret) | int(1) }}"
       temp_mesure: "{{ states(_temp_eau) | float(20) }}"
       temp_mem:    "{{ states(_mem_temp) | float(20) }}"
       temperature_eau: >
@@ -484,7 +499,6 @@ action:
                    or (mode in ['Ete', 'Chauffage'] and now_s >= pivot_s_clamp and now_s <= fin_ete_s)
                  ) }}
         then:
-          - delay: "00:00:01"
           - service: switch.turn_on
             target:
               entity_id: !input cde_electrolyseur
@@ -497,11 +511,11 @@ action:
       - service: switch.turn_off
         target:
           entity_id: !input cde_electrolyseur
-      - delay: "00:00:01"
       - service: switch.turn_off
         target:
           entity_id: !input cde_pompe_chaleur
-      - delay: "00:00:01"
+      - delay:
+          seconds: "{{ tempo_arret if mode in ['Ete', 'Chauffage'] else 0 }}"
       - service: switch.turn_off
         target:
           entity_id: !input cde_pompe

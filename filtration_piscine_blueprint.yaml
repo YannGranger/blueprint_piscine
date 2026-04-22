@@ -152,18 +152,11 @@ blueprint:
           domain: input_number
 
     # ── Paramètres marche forcée (mode On) ───────────────────
-    duree_on_h:
-      name: Durée marche forcée — heures
+    duree_on:
+      name: Durée marche forcée (heures)
       description: >
-        0 = durée indéterminée. Sinon la pompe repasse en mode Été après
-        la durée configurée (heures + minutes).
-      selector:
-        entity:
-          domain: input_number
-
-    duree_on_min:
-      name: Durée marche forcée — minutes
-      description: S'ajoute aux heures. 0h 0min = indéterminé.
+        Durée en heures, décimales acceptées (ex : 1.5 = 1h30).
+        0 = durée indéterminée.
       selector:
         entity:
           domain: input_number
@@ -269,9 +262,7 @@ trigger:
   - platform: state
     entity_id: !input tempo_arret
   - platform: state
-    entity_id: !input duree_on_h
-  - platform: state
-    entity_id: !input duree_on_min
+    entity_id: !input duree_on
 
 # ── Conditions globales ───────────────────────────────────────
 condition: []
@@ -292,8 +283,7 @@ action:
       _mode_calcul:          !input mode_calcul
       _tempo_eau:            !input tempo_eau
       _tempo_arret:          !input tempo_arret
-      _duree_on_h:           !input duree_on_h
-      _duree_on_min:         !input duree_on_min
+      _duree_on:             !input duree_on
       _mem_temp:             !input mem_temp
       _cde_pompe:            !input cde_pompe
       _cde_electrolyseur:    !input cde_electrolyseur
@@ -403,9 +393,7 @@ action:
       ma_pac: "{{ mode == 'Chauffage' and not consigne_atteinte }}"
 
       # ── Timer marche forcée ────────────────────────────────
-      duree_on_s: >
-        {{ (states(_duree_on_h) | float(0) * 3600
-            + states(_duree_on_min) | float(0) * 60) | int }}
+      duree_on_s: "{{ (states(_duree_on) | float(0) * 3600) | int }}"
       on_since_s: >
         {% if mode == 'On' %}
           {{ (now() - states[_mode].last_changed).total_seconds() | int }}
@@ -529,7 +517,7 @@ action:
             data:
               title: "⏱️ Piscine — Marche forcée terminée"
               message: >
-                ⏱️ Durée écoulée : {{ duree_on_s // 3600 }}h{{ '%02d' | format((duree_on_s % 3600) // 60) }}
+                ⏱️ Durée : {{ states(_duree_on) | float(0) }}h
                 🌬️ Retour automatique en mode Été
       - service: input_select.select_option
         target:

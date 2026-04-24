@@ -608,8 +608,7 @@ action:
               {{ temperature_eau | float(0) > 16
                  and (
                    mode == 'On'
-                   or (mode == 'Ete' and in_session_ete)
-                   or (mode == 'Chauffage' and now_s >= debut_s1 and now_s < debut_s1 + session_duree_s)
+                   or (mode in ['Ete', 'Chauffage'] and in_session_ete)
                  ) }}
         then:
           - service: switch.turn_on

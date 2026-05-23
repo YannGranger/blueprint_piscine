@@ -215,9 +215,7 @@ blueprint:
           domain: input_datetime
 
 # ── Comportement de l'automation ──────────────────────────────
-mode: queued
-max: 2
-max_exceeded: silent
+mode: restart
 
 # ── Déclencheurs ──────────────────────────────────────────────
 trigger:

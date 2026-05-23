@@ -465,6 +465,8 @@ action:
         | dur={{ session_duree_s }}s | nb={{ nb_sessions }}
         | temp_mem={{ temp_mem | round(2) }} | temp_mesure={{ temp_mesure | round(2) }}
         | pompe={{ 'ON' if is_state(_cde_pompe,'on') else 'OFF' }}({{ pompe_on_since_s | int }}s)
+        | elec={{ 'ON' if is_state(_cde_electrolyseur,'on') else 'OFF' }}
+        | tempo_s={{ tempo_s | int }}s | tempo_arret={{ tempo_arret | int }}s
         | trigger={{ trigger.platform ~ ':' ~ (trigger.entity_id | default('time')) }}
 
   # ═══════════════════════════════════════════════════════════
@@ -652,6 +654,29 @@ action:
           entity_id: !input cde_pompe_chaleur
       - delay:
           seconds: "{{ tempo_arret if mode in ['Ete', 'Chauffage'] else 0 }}"
-      - service: switch.turn_off
-        target:
-          entity_id: !input cde_pompe
+      - if:
+          - condition: template
+            value_template: >
+              {% set cn = now().hour * 3600 + now().minute * 60 + now().second %}
+              {% set in_s = (cn >= debut_s1 and cn < debut_s1 + session_duree_s)
+                 or (nb_sessions >= 2 and _h_session_2 and
+                     cn >= debut_s2 and cn < debut_s2 + session_duree_s)
+                 or (nb_sessions >= 3 and _h_session_3 and
+                     cn >= debut_s3 and cn < debut_s3 + session_duree_s) %}
+              {% set cm = states(_mode) %}
+              {{ not (cm == 'Ete' and in_s) and not (cm in ['Chauffage', 'On']) }}
+        then:
+          - service: switch.turn_off
+            target:
+              entity_id: !input cde_pompe
+
+  # ── Log post-commande (état réel après actions) ───────────────
+  - service: system_log.write
+    data:
+      level: warning
+      logger: blueprint.filtration_piscine
+      message: >
+        [FILTR-POST] pompe={{ 'ON' if is_state(_cde_pompe,'on') else 'OFF' }}
+        | elec={{ 'ON' if is_state(_cde_electrolyseur,'on') else 'OFF' }}
+        | pac={{ 'ON' if is_state(_cde_pompe_chaleur,'on') else 'OFF' }}
+        | ma_ppe={{ ma_ppe }} | mode={{ mode }}

@@ -446,6 +446,22 @@ action:
         {% endif %}
 
   # ═══════════════════════════════════════════════════════════
+  # DEBUG LOG
+  # ═══════════════════════════════════════════════════════════
+  - service: system_log.write
+    data:
+      level: warning
+      logger: blueprint.filtration_piscine
+      message: >
+        [FILTR] mode={{ mode }} | ma_ppe={{ ma_ppe }} | in_session={{ in_session_ete }}
+        | now={{ '%02d:%02d:%02d' | format(now_s//3600,(now_s%3600)//60,now_s%60) }}
+        | s1={{ '%02d:%02d' | format(debut_s1//3600,(debut_s1%3600)//60) }}→{{ '%02d:%02d' | format((debut_s1+session_duree_s)//3600,((debut_s1+session_duree_s)%3600)//60) }}
+        | dur={{ session_duree_s }}s | nb={{ nb_sessions }}
+        | temp_mem={{ temp_mem | round(2) }} | temp_mesure={{ temp_mesure | round(2) }}
+        | pompe={{ 'ON' if is_state(_cde_pompe,'on') else 'OFF' }}({{ pompe_on_since_s | int }}s)
+        | trigger={{ trigger.platform ~ ':' ~ (trigger.entity_id | default('time')) }}
+
+  # ═══════════════════════════════════════════════════════════
   # NOTIFICATIONS
   # ═══════════════════════════════════════════════════════════
 

@@ -456,6 +456,12 @@ action:
         [FILTR] mode={{ mode }} | ma_ppe={{ ma_ppe }} | in_session={{ in_session_ete }}
         | now={{ '%02d:%02d:%02d' | format(now_s//3600,(now_s%3600)//60,now_s%60) }}
         | s1={{ '%02d:%02d' | format(debut_s1//3600,(debut_s1%3600)//60) }}→{{ '%02d:%02d' | format((debut_s1+session_duree_s)//3600,((debut_s1+session_duree_s)%3600)//60) }}
+        {%- if nb_sessions >= 2 and _h_session_2 %}
+        | s2={{ '%02d:%02d' | format(debut_s2//3600,(debut_s2%3600)//60) }}→{{ '%02d:%02d' | format((debut_s2+session_duree_s)//3600,((debut_s2+session_duree_s)%3600)//60) }}
+        {%- endif %}
+        {%- if nb_sessions >= 3 and _h_session_3 %}
+        | s3={{ '%02d:%02d' | format(debut_s3//3600,(debut_s3%3600)//60) }}→{{ '%02d:%02d' | format((debut_s3+session_duree_s)//3600,((debut_s3+session_duree_s)%3600)//60) }}
+        {%- endif %}
         | dur={{ session_duree_s }}s | nb={{ nb_sessions }}
         | temp_mem={{ temp_mem | round(2) }} | temp_mesure={{ temp_mesure | round(2) }}
         | pompe={{ 'ON' if is_state(_cde_pompe,'on') else 'OFF' }}({{ pompe_on_since_s | int }}s)
@@ -573,7 +579,8 @@ action:
       - condition: template
         value_template: >
           {{ is_state(_cde_pompe, 'on') and pompe_on_since_s >= tempo_s
-             and not (mode == 'Ete' and in_session_ete) }}
+             and (not (mode == 'Ete' and in_session_ete)
+                  or pompe_on_since_s < tempo_s + 300) }}
     then:
       - service: input_number.set_value
         target:
@@ -637,15 +644,6 @@ action:
               entity_id: !input cde_electrolyseur
     else:
       # ── Hors plage → Arrêt tout ─────────────────────────
-      - if:
-          - condition: template
-            value_template: "{{ is_state(_cde_pompe, 'on') and pompe_on_since_s >= tempo_s }}"
-        then:
-          - service: input_number.set_value
-            target:
-              entity_id: !input mem_temp
-            data:
-              value: "{{ temp_mesure }}"
       - service: switch.turn_off
         target:
           entity_id: !input cde_electrolyseur

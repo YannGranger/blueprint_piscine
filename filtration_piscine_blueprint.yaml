@@ -264,7 +264,7 @@ action:
       consigne_atteinte: "{{ temperature_eau | float(0) >= consigne }}"
 
       # ── Calcul durée filtration ────────────────────────────
-      temp_min: "{{ [temperature_eau | float(20), 10.0] | max }}"
+      temp_min: "{{ [temp_mem | float(20), 10.0] | max }}"
       duree_abaque_h: >
         {{ (0.00335 * temp_min**3
             - 0.14953 * temp_min**2

@@ -552,11 +552,12 @@ action:
           entity_id: !input cde_pompe_chaleur
       - stop: "Consigne atteinte — basculement vers mode Été"
 
-  # ── Mémoriser la température (si pompe stabilisée) ────────
+  # ── Mémoriser la température (si pompe stabilisée, hors session Été) ──
   - if:
       - condition: template
         value_template: >
-          {{ is_state(_cde_pompe, 'on') and pompe_on_since_s >= tempo_s }}
+          {{ is_state(_cde_pompe, 'on') and pompe_on_since_s >= tempo_s
+             and not (mode == 'Ete' and in_session_ete) }}
     then:
       - service: input_number.set_value
         target:
@@ -620,6 +621,15 @@ action:
               entity_id: !input cde_electrolyseur
     else:
       # ── Hors plage → Arrêt tout ─────────────────────────
+      - if:
+          - condition: template
+            value_template: "{{ is_state(_cde_pompe, 'on') and pompe_on_since_s >= tempo_s }}"
+        then:
+          - service: input_number.set_value
+            target:
+              entity_id: !input mem_temp
+            data:
+              value: "{{ temp_mesure }}"
       - service: switch.turn_off
         target:
           entity_id: !input cde_electrolyseur

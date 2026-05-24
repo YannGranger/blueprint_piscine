@@ -322,7 +322,7 @@ action:
       consigne_atteinte: "{{ temperature_eau | float(0) >= consigne }}"
 
       # ── Calcul durée filtration ────────────────────────────
-      temp_min: "{{ [temp_mem | float(20), 10.0] | max }}"
+      temp_min: "{{ [temperature_eau | float(20), 10.0] | max }}"
       duree_abaque_h: >
         {{ (0.00335 * temp_min**3
             - 0.14953 * temp_min**2
@@ -446,30 +446,6 @@ action:
         {% endif %}
 
   # ═══════════════════════════════════════════════════════════
-  # DEBUG LOG
-  # ═══════════════════════════════════════════════════════════
-  - service: system_log.write
-    data:
-      level: warning
-      logger: blueprint.filtration_piscine
-      message: >
-        [FILTR] mode={{ mode }} | ma_ppe={{ ma_ppe }} | in_session={{ in_session_ete }}
-        | now={{ '%02d:%02d:%02d' | format(now_s//3600,(now_s%3600)//60,now_s%60) }}
-        | s1={{ '%02d:%02d' | format(debut_s1//3600,(debut_s1%3600)//60) }}→{{ '%02d:%02d' | format((debut_s1+session_duree_s)//3600,((debut_s1+session_duree_s)%3600)//60) }}
-        {%- if nb_sessions >= 2 and _h_session_2 %}
-        | s2={{ '%02d:%02d' | format(debut_s2//3600,(debut_s2%3600)//60) }}→{{ '%02d:%02d' | format((debut_s2+session_duree_s)//3600,((debut_s2+session_duree_s)%3600)//60) }}
-        {%- endif %}
-        {%- if nb_sessions >= 3 and _h_session_3 %}
-        | s3={{ '%02d:%02d' | format(debut_s3//3600,(debut_s3%3600)//60) }}→{{ '%02d:%02d' | format((debut_s3+session_duree_s)//3600,((debut_s3+session_duree_s)%3600)//60) }}
-        {%- endif %}
-        | dur={{ session_duree_s }}s | nb={{ nb_sessions }}
-        | temp_mem={{ temp_mem | round(2) }} | temp_mesure={{ temp_mesure | round(2) }}
-        | pompe={{ 'ON' if is_state(_cde_pompe,'on') else 'OFF' }}({{ pompe_on_since_s | int }}s)
-        | elec={{ 'ON' if is_state(_cde_electrolyseur,'on') else 'OFF' }}
-        | tempo_s={{ tempo_s | int }}s | tempo_arret={{ tempo_arret | int }}s
-        | trigger={{ trigger.platform ~ ':' ~ (trigger.entity_id | default('time')) }}
-
-  # ═══════════════════════════════════════════════════════════
   # NOTIFICATIONS
   # ═══════════════════════════════════════════════════════════
 
@@ -576,13 +552,11 @@ action:
           entity_id: !input cde_pompe_chaleur
       - stop: "Consigne atteinte — basculement vers mode Été"
 
-  # ── Mémoriser la température (si pompe stabilisée, hors session Été) ──
+  # ── Mémoriser la température (si pompe stabilisée) ────────
   - if:
       - condition: template
         value_template: >
-          {{ is_state(_cde_pompe, 'on') and pompe_on_since_s >= tempo_s
-             and (not (mode == 'Ete' and in_session_ete)
-                  or pompe_on_since_s < tempo_s + 300) }}
+          {{ is_state(_cde_pompe, 'on') and pompe_on_since_s >= tempo_s }}
     then:
       - service: input_number.set_value
         target:
@@ -654,29 +628,6 @@ action:
           entity_id: !input cde_pompe_chaleur
       - delay:
           seconds: "{{ tempo_arret if mode in ['Ete', 'Chauffage'] else 0 }}"
-      - if:
-          - condition: template
-            value_template: >
-              {% set cn = now().hour * 3600 + now().minute * 60 + now().second %}
-              {% set in_s = (cn >= debut_s1 and cn < debut_s1 + session_duree_s)
-                 or (nb_sessions >= 2 and _h_session_2 and
-                     cn >= debut_s2 and cn < debut_s2 + session_duree_s)
-                 or (nb_sessions >= 3 and _h_session_3 and
-                     cn >= debut_s3 and cn < debut_s3 + session_duree_s) %}
-              {% set cm = states(_mode) %}
-              {{ not (cm == 'Ete' and in_s) and not (cm in ['Chauffage', 'On']) }}
-        then:
-          - service: switch.turn_off
-            target:
-              entity_id: !input cde_pompe
-
-  # ── Log post-commande (état réel après actions) ───────────────
-  - service: system_log.write
-    data:
-      level: warning
-      logger: blueprint.filtration_piscine
-      message: >
-        [FILTR-POST] pompe={{ 'ON' if is_state(_cde_pompe,'on') else 'OFF' }}
-        | elec={{ 'ON' if is_state(_cde_electrolyseur,'on') else 'OFF' }}
-        | pac={{ 'ON' if is_state(_cde_pompe_chaleur,'on') else 'OFF' }}
-        | ma_ppe={{ ma_ppe }} | mode={{ mode }}
+      - service: switch.turn_off
+        target:
+          entity_id: !input cde_pompe
